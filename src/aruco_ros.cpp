@@ -44,7 +44,7 @@ void ar_broadcast(int id, Vec3d tvec, Vec3d rvec)
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "aruco_tracker");
-    RosImageConverter rosimg;
+    RosImageConverter rosimg(sensor_msgs::image_encodings::BGR8);
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
     image_transport::Publisher img_pub;
