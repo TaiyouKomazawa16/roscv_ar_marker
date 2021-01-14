@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   tf2_ros
   geometry_msgs
+  robot_localization
 )
 
 ## System dependencies are found with CMake's conventions
