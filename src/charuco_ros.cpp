@@ -1,25 +1,24 @@
 #include "ros/ros.h"
 
-#include <image_transport/image_transport.h>
-#include <cv_bridge/cv_bridge.h>
-#include <sensor_msgs/image_encodings.h>
-
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <tf2/LinearMath/Quaternion.h>
-
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-
-#include <opencv2/calib3d.hpp>   // 回転ベクトル↔回転行列の変換に使用
-#include <eigen3/Eigen/Geometry> // 四元数の計算に使用
-
-#include <opencv2/aruco.hpp>
-#include <opencv2/aruco/charuco.hpp>
 #include <vector>
 #include <iostream>
 
 #include <bits/stdc++.h> //円周率用
+//roscvイメージング用パッケージ
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+//ros姿勢管理用パッケージ
+#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
+#include <opencv2/calib3d.hpp>   // 回転ベクトル↔回転行列の変換に使用
+//マーカ追跡パッケージ
+#include <opencv2/aruco.hpp>
+#include <opencv2/aruco/charuco.hpp>
+//画像サブスクライバ
 #include "ros_to_cv2_conv.hpp"
 
 using namespace std;
@@ -33,7 +32,7 @@ cv::Vec3d getEuler(cv::Vec3d rvec)
 {
     // 回転ベクトルrvecを3x3の回転行列Rに変換
     cv::Mat R;
-    Rodrigues(rvec, R);
+    cv::Rodrigues(rvec, R);
     float sy = sqrt(R.at<double>(0, 0) * R.at<double>(0, 0) + R.at<double>(1, 0) * R.at<double>(1, 0));
     bool singular = sy < 1e-6; // If
 
@@ -75,9 +74,9 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, Vec3d r
     msg.pose.pose.position.z = transformStamped.transform.translation.z;
     msg.pose.pose.orientation = transformStamped.transform.rotation;
 
-    //ROS_INFO("marker T:[%f,%f,%f]\tR:[%f,%f,%f,%f]",
-    //         tvec[0], tvec[1], tvec[2],
-    //         q.x(), q.y(), q.z(), q.w());
+    ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
+             ar_frame.c_str(), tvec[0], tvec[1], tvec[2],
+             q.x(), q.y(), q.z(), q.w());
 
     msg.header.stamp = ros::Time::now();
     pub.publish(msg);
@@ -88,7 +87,7 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, Vec3d r
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "charuco_tracker");
-    
+
     RosImageConverter rosimg("/camera/color/image_rect_color", "/camera/color/camera_info", 
                                     sensor_msgs::image_encodings::BGR8);
     RosImageConverter rosdepth("/camera/aligned_depth_to_color/image_raw", "/camera/aligned_depth_to_color/camera_info",
