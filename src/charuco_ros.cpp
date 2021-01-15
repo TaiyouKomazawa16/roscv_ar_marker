@@ -37,22 +37,18 @@ cv::Vec3d getEuler(cv::Vec3d rvec)
     float sy = sqrt(R.at<double>(0, 0) * R.at<double>(0, 0) + R.at<double>(1, 0) * R.at<double>(1, 0));
     bool singular = sy < 1e-6; // If
 
-    float x, y, z;
+    cv::Vec3d ea;
     if(!singular){
-        x = atan2(R.at<double>(2, 1), R.at<double>(2, 2));
-        y = atan2(-R.at<double>(2, 0), sy);
-        z = atan2(R.at<double>(1, 0), R.at<double>(0, 0));
+        ea[0] = -atan2(R.at<double>(1, 0), R.at<double>(0, 0));
+        ea[1] = atan2(R.at<double>(2, 1), R.at<double>(2, 2));
+        ea[2] = atan2(-R.at<double>(2, 0), sy);
     }else{
-        x = atan2(-R.at<double>(1, 2), R.at<double>(1, 1));
-        y = atan2(-R.at<double>(2, 0), sy);
-        z = 0;
+        ea[0] = 0;
+        ea[1] = atan2(-R.at<double>(1, 2), R.at<double>(1, 1));
+        ea[2] = atan2(-R.at<double>(2, 0), sy);
     }
-    cv::Vec3d ea_;
-    ea_[0] = -z;
-    ea_[2] = y;
-    ea_[1] = x;
 
-    return ea_;
+    return ea;
 }
 
 void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, Vec3d rpy)
@@ -92,6 +88,7 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, Vec3d r
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "charuco_tracker");
+    
     RosImageConverter rosimg("/camera/color/image_rect_color", "/camera/color/camera_info", 
                                     sensor_msgs::image_encodings::BGR8);
     RosImageConverter rosdepth("/camera/aligned_depth_to_color/image_raw", "/camera/aligned_depth_to_color/camera_info",
@@ -137,143 +134,138 @@ int main(int argc, char **argv)
 
     ros::Rate rate(30);
 
-    while (ros::ok())
-    {
+    while (ros::ok()){
         cv_bridge::CvImagePtr rgb_ptr, depth_ptr;
         rosimg.get_img(rgb_ptr);
         rosdepth.get_img(depth_ptr);
-        if (rgb_ptr && depth_ptr)
-        {
 
-            // マーカ検出(入力: 引数1,2,5  出力: 引数3,4,6
-            aruco::detectMarkers(rgb_ptr->image, dictionary, corners, ids, detectorParams, rejected);
+        if (!rgb_ptr || !depth_ptr){ //画像データなし
+            ar_broadcast(rgb_pub, ar_frame, rgb_tvec, rgb_rpy);
+            ar_broadcast(depth_pub, ar_frame_depth, depth_tvec, depth_rpy);
+            ros::spinOnce();
+            rate.sleep();
+            continue;
+        }
 
-            if (ids.size() > 3)
-            {
-                aruco::detectCharucoDiamond(rgb_ptr->image, corners, ids, squareLength / markerLength, diamondCorners, diamondIds, imgMatrix, distCoeffs);
-                if (diamondIds.size() > 0)
-                {
-                    aruco::estimatePoseSingleMarkers(diamondCorners, squareLength, imgMatrix, distCoeffs, rvecs, tvecs);
+        // マーカ検出
+        aruco::detectMarkers(rgb_ptr->image, dictionary, corners, ids, detectorParams, rejected);
+        if (ids.size() <= 3){ //ダイヤモンドを構成するマーカ(4つ必要)が不足
+            ar_broadcast(rgb_pub, ar_frame, rgb_tvec, rgb_rpy);
+            ar_broadcast(depth_pub, ar_frame_depth, depth_tvec, depth_rpy);
+            ros::spinOnce();
+            rate.sleep();
+            continue;
+        }
+
+        // ダイヤモンドマーカ検出
+        aruco::detectCharucoDiamond(rgb_ptr->image, corners, ids, squareLength / markerLength, diamondCorners, diamondIds, imgMatrix, distCoeffs);
+        if (diamondIds.size() <= 0) { //ダイヤモンドマーカ未検出
+            ar_broadcast(rgb_pub, ar_frame, rgb_tvec, rgb_rpy);
+            ar_broadcast(depth_pub, ar_frame_depth, depth_tvec, depth_rpy);
+            ros::spinOnce();
+            rate.sleep();
+            continue;
+        }
+
+        // ダイヤモンドマーカ測定
+        aruco::estimatePoseSingleMarkers(diamondCorners, squareLength, imgMatrix, distCoeffs, rvecs, tvecs);
+        
+        for (unsigned int i = 0; i < diamondIds.size(); i++){
+            cv::Vec4i id = diamondIds[i];
+            if (target_id == id[0]+id[1]+id[2]+id[3]){
+                /* ---rgbカメラ系の処理--- */
+                rgb_tvec = tvecs[i];
+                rgb_rpy = getEuler(rvecs[i]);
+                
+                /* ---depthカメラ系の処理--- */
+                vector<cv::Point2f> dcor = diamondCorners[i];
+                cv::Point pt[4] = {dcor[0], dcor[1], dcor[2], dcor[3]};
+                //マーカの重心座標の検出
+                double s1 = ((pt[3].x-pt[1].x)*(pt[0].y-pt[1].y)-(pt[3].y-pt[1].y)*(pt[0].x-pt[1].x)) / 2.0;
+                double s2 = ((pt[3].x-pt[1].x)*(pt[1].y-pt[2].y)-(pt[3].y-pt[1].y)*(pt[1].x-pt[2].x)) / 2.0;
+                cv::Point ptc; //重心座標
+                ptc.x = pt[0].x + (pt[2].x - pt[0].x) * s1 / (s1 + s2);
+                ptc.y = pt[0].y + (pt[2].y - pt[0].y) * s1 / (s1 + s2);
+                //マーカのデプス領域の切り出し
+                cv::Point min_pt = pt[0];
+                cv::Point max_pt = pt[0];
+                for(int i = 1; i < 4; i++){
+                    if(min_pt.x > pt[i].x)
+                        min_pt.x = pt[i].x;
+                    if(max_pt.x < pt[i].x)
+                        max_pt.x = pt[i].x;
+                    if(min_pt.y > pt[i].y)
+                        min_pt.y = pt[i].y;
+                    if(max_pt.y < pt[i].y)
+                        max_pt.y = pt[i].y;
                 }
-
-                if (diamondIds.size() > 0)
-                { //マーカ検出の結果
-                    //aruco::drawDetectedMarkers(rgb_ptr->image, diamondCorners, ids);
-                    //マーカ姿勢推定の結果
-                    //aruco::drawDetectedDiamonds(rgb_ptr->image, diamondCorners, diamondIds);
-                    for (unsigned int i = 0; i < diamondIds.size(); i++)
-                    {
-                        //aruco::drawAxis(rgb_ptr->image, imgMatrix, distCoeffs, rvecs[i], tvecs[i], markerLength * 0.5f);
-                        cv::Vec4i id = diamondIds[i];
-
-                        if (target_id == id[0]+id[1]+id[2]+id[3]){
-                            vector<cv::Point2f> dcor = diamondCorners[i];
-
-                            rgb_tvec = tvecs[i];
-                            rgb_rpy = getEuler(rvecs[i]);
-
-                            cv::Point pt[4] = {dcor[0], dcor[1], dcor[2], dcor[3]};
-                            /*マーカの重心座標の検出*/
-                            double s1 = ((pt[3].x-pt[1].x)*(pt[0].y-pt[1].y)-(pt[3].y-pt[1].y)*(pt[0].x-pt[1].x)) / 2.0;
-                            double s2 = ((pt[3].x-pt[1].x)*(pt[1].y-pt[2].y)-(pt[3].y-pt[1].y)*(pt[1].x-pt[2].x)) / 2.0;
-
-                            cv::Point ptc; //重心座標
-                            ptc.x = pt[0].x + (pt[2].x - pt[0].x) * s1 / (s1 + s2);
-                            ptc.y = pt[0].y + (pt[2].y - pt[0].y) * s1 / (s1 + s2);
-
-                            /*マーカのデプス領域の切り出し*/
-                            cv::Point min_pt = pt[0];
-                            cv::Point max_pt = pt[0];
-                            for(int i = 1; i < 4; i++){
-                                if(min_pt.x > pt[i].x)
-                                    min_pt.x = pt[i].x;
-                                if(max_pt.x < pt[i].x)
-                                    max_pt.x = pt[i].x;
-                                if(min_pt.y > pt[i].y)
-                                    min_pt.y = pt[i].y;
-                                if(max_pt.y < pt[i].y)
-                                    max_pt.y = pt[i].y;
-                            }
-                            cv::Mat dmarker = depth_ptr->image(cv::Rect(min_pt.x,min_pt.y,max_pt.x-min_pt.x,max_pt.y-min_pt.y));
-                            cv::Size sz = dmarker.size();
-
-                            /*最小二乗法による点群の平面フィッティング*/
-                            /* M*U = V */
-                            cv::Mat M = cv::Mat::zeros(3,3, CV_64F);
-                            cv::Mat U = cv::Mat::zeros(3,1, CV_64F);
-                            cv::Mat V = cv::Mat::zeros(3,1, CV_64F);
-
-                            double pt_c_x = (ptc.x - min_pt.x); //マーカー領域の中心位置x[px]
-                            double pt_c_y = (ptc.y - min_pt.y); //マーカー領域の中心位置y[px]
-
-                            for(int i = 0; i < sz.height; i++){ //画像y方向
-                                for(int j = 0; j < sz.width; j++){ //画像x方向
-                                    ushort depth = dmarker.at<ushort>(j, i); //z[mm]
-                                    if(depth != 0){
-                                        double _i = (double)(i - pt_c_x) / depthMatrix.at<double>(0, 0) * depth; //y[mm]
-                                        double _j = (double)(j - pt_c_y) / depthMatrix.at<double>(1, 1) * depth; //x[mm]
-                                        M.at<double>(0,0) += 1.0;
-                                        M.at<double>(1,1) += _j*_j;
-                                        M.at<double>(2,2) += _i*_i;
-                                        M.at<double>(1,2) += _j*_i;
-                                        M.at<double>(2,1) += _j*_i;
-                                        M.at<double>(0,1) += _j;
-                                        M.at<double>(1,0) += _j;
-                                        M.at<double>(0,2) += _i;
-                                        M.at<double>(2,0) += _i;
-                                        U.at<double>(0,0) += depth;
-                                        U.at<double>(1,0) += _j*depth;
-                                        U.at<double>(2,0) += _i*depth;
-                                    }
-                                }
-                            }
-
-                            cv::solve(M, U, V, DECOMP_LU); //LU分解にて平面の定数行列(V)を導出
-                            //平面の式: z[mm] = V1 * x[mm] + V2 * y[mm] + V0
-
-                            //マーカ中心部の推定距離を測定
-                            double z_c = V.at<double>(0, 0);
-                            //カメラパラメータより実距離のx,yを求める。
-                            double x_c = ((ptc.x - depthMatrix.at<double>(0, 2)) / depthMatrix.at<double>(0, 0)) * z_c;
-                            double y_c = ((ptc.y - depthMatrix.at<double>(1, 2)) / depthMatrix.at<double>(1, 1)) * z_c;
-
-                            cv::Vec3d rpy, tvec;
-                            tvec[0] = x_c / 1E3;
-                            tvec[1] = y_c / 1E3;
-                            tvec[2] = z_c / 1E3;
-
-                            double pt_1c_x = pt[1].x - ptc.x; //中心と45度方向のマーカー角1との位置ベクトルx[px]
-                            double pt_1c_y = pt[1].y - ptc.y; //中心と45度方向のマーカー角1との位置ベクトルy[px]
-
-                            double rxy = std::atan2(pt_1c_y / sz.height, pt_1c_x / sz.width) + M_PI / 4.0;
-
-                            // V1*x + V2*y - 1*z + V0 = 0
-                            cv::Mat NV = cv::Mat::zeros(3, 1, CV_64F); //法線ベクトル
-                            NV.at<double>(0) = V.at<double>(1, 0);
-                            NV.at<double>(1) = V.at<double>(2, 0);
-                            NV.at<double>(2) = -1.0;
-
-                            double roll = atan2(NV.at<double>(2), NV.at<double>(0)) + M_PI/2;
-                            double pitch = atan2(NV.at<double>(2), NV.at<double>(1)) - M_PI/2;
-                            double yaw = -rxy - M_PI;
-                            rpy[1] = roll;
-                            rpy[2] = pitch;
-                            rpy[0] = yaw;
-
-                            depth_tvec = tvec;
-                            depth_rpy = rpy;
-
-
+                cv::Mat dmarker = depth_ptr->image(cv::Rect(min_pt.x,min_pt.y,max_pt.x-min_pt.x,max_pt.y-min_pt.y));
+                cv::Size sz = dmarker.size();
+                /*最小二乗法による点群の平面フィッティング*/
+                /* M*U = V */
+                cv::Mat M = cv::Mat::zeros(3,3, CV_64F);
+                cv::Mat U = cv::Mat::zeros(3,1, CV_64F);
+                cv::Mat V = cv::Mat::zeros(3,1, CV_64F);
+                double pt_c_x = (ptc.x - min_pt.x); //マーカー領域の中心位置x[px]
+                double pt_c_y = (ptc.y - min_pt.y); //マーカー領域の中心位置y[px]
+                for(int i = 0; i < sz.height; i++){ //画像y方向
+                    for(int j = 0; j < sz.width; j++){ //画像x方向
+                        ushort depth = dmarker.at<ushort>(j, i); //z[mm]
+                        if(depth != 0){
+                            double _i = (double)(i - pt_c_x) / depthMatrix.at<double>(0, 0) * depth; //y[mm]
+                            double _j = (double)(j - pt_c_y) / depthMatrix.at<double>(1, 1) * depth; //x[mm]
+                            M.at<double>(0,0) += 1.0;
+                            M.at<double>(1,1) += _j*_j;
+                            M.at<double>(2,2) += _i*_i;
+                            M.at<double>(1,2) += _j*_i;
+                            M.at<double>(2,1) += _j*_i;
+                            M.at<double>(0,1) += _j;
+                            M.at<double>(1,0) += _j;
+                            M.at<double>(0,2) += _i;
+                            M.at<double>(2,0) += _i;
+                            U.at<double>(0,0) += depth;
+                            U.at<double>(1,0) += _j*depth;
+                            U.at<double>(2,0) += _i*depth;
                         }
                     }
                 }
-            }
+                cv::solve(M, U, V, DECOMP_LU); //LU分解にて平面の定数行列(V)を導出
+                //平面の式: z[mm] = V1 * x[mm] + V2 * y[mm] + V0
 
-            //cv::imshow("Aruco", imageCopy); //結果をウィンドウ(Aruco)に表示
+                cv::Vec3d rpy, tvec;
+
+                //マーカ中心部の推定距離を測定
+                double z_c = V.at<double>(0, 0);
+                //カメラパラメータより実距離のx,yを求める。
+                double x_c = ((ptc.x - depthMatrix.at<double>(0, 2)) / depthMatrix.at<double>(0, 0)) * z_c;
+                double y_c = ((ptc.y - depthMatrix.at<double>(1, 2)) / depthMatrix.at<double>(1, 1)) * z_c;
+                
+                //並進成分のデータを格納 単位換算[mm]->[m]
+                tvec[0] = x_c / 1E3;
+                tvec[1] = y_c / 1E3;
+                tvec[2] = z_c / 1E3;
+
+                double pt_1c_x = pt[1].x - ptc.x; //中心と45度方向のマーカー角1との位置ベクトルx[px]
+                double pt_1c_y = pt[1].y - ptc.y; //中心と45度方向のマーカー角1との位置ベクトルy[px]
+                double rxy = std::atan2(pt_1c_y / sz.height, pt_1c_x / sz.width) + M_PI / 4.0;
+
+                // V1*x + V2*y - 1*z + V0 = 0
+                cv::Mat NV = cv::Mat::zeros(3, 1, CV_64F); //法線ベクトル
+                NV.at<double>(0) = V.at<double>(1, 0);
+                NV.at<double>(1) = V.at<double>(2, 0);
+                NV.at<double>(2) = -1.0;
+
+                rpy[0] = -rxy - M_PI; //x軸回転(roll)
+                rpy[1] = atan2(NV.at<double>(2), NV.at<double>(0)) + M_PI/2; //y軸回転(pitch)
+                rpy[2] = atan2(NV.at<double>(2), NV.at<double>(1)) - M_PI/2; //z軸回転(yaw)
+
+                depth_tvec = tvec;
+                depth_rpy = rpy;
+            }
         }
+
         ar_broadcast(rgb_pub, ar_frame, rgb_tvec, rgb_rpy);
         ar_broadcast(depth_pub, ar_frame_depth, depth_tvec, depth_rpy);
-
         ros::spinOnce();
         rate.sleep();
     }
