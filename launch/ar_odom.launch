@@ -3,32 +3,32 @@
     <node pkg="roscv_ar_marker" name="ar_tracker" type="charuco_ros_node"/>
 
   <node pkg="robot_localization" type="ekf_localization_node" name="ekf_ar_track" clear_params="true" output="screen"> 
-    <param name="frequency" value="15"/> 
+    <param name="frequency" value="30"/> 
     <param name="sensor_timeout" value="0.5"/> 
     <param name="two_d_mode" value="false"/> 
     <param name="map_frame" value="map"/>             
     <param name="odom_frame" value="camera_color_frame"/> 
-    <param name="base_link_frame" value="ar_mark_6"/> 
+    <param name="base_link_frame" value="ar_mark_6_fixed"/> 
     <param name="world_frame" value="camera_color_frame"/> 
     <param name="transform_time_offset" value="0.08"/> 
     <param name="pose0" value="/ar_mark_6/depth_pose"/>
     <param name="pose1" value="/ar_mark_6/rgb_pose"/> 
     <rosparam param="pose0_config">[true, true, true, 
+                                    false,  false,  false, 
+                                    false,  false,  false,
+                                    false,  false,  false,
+                                    false,  false,  false]</rosparam> 
+    <rosparam param="pose1_config">[false,  false,  false, 
                                     true, true, true, 
-                                    true, true, true, 
-                                    false, false, true, 
-                                    false, false, false]</rosparam> 
-    <rosparam param="pose1_config">[true, true, true, 
-                                    true, true, true, 
-                                    true, true, true, 
-                                    true, true, true, 
-                                    true,  true,  false]</rosparam> 
+                                    false,  false,  false,
+                                    false,  false,  false,
+                                    false,  false,  false]</rosparam> 
 
     <param name="pose0_relative" value="false"/> 
     <param name="pose1_relative" value="false"/> 
     <param name="print_diagnostics" value="true"/> 
-    <param name="pose0_queue_size" value="2"/> 
-    <param name="pose1_queue_size" value="2"/> 
+    <param name="pose0_queue_size" value="10"/> 
+    <param name="pose1_queue_size" value="10"/> 
   </node> 
 
 </launch>
