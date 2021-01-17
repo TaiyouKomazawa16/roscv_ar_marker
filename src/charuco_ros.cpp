@@ -30,9 +30,10 @@
 using namespace std;
 using namespace cv;
 
-const int target_id = 6;
-std::string ar_frame = "char_mark_" + std::to_string(target_id);
-std::string ar_frame_depth = "char_mark_" + std::to_string(target_id) + "_depth";
+std::string cam_frame;
+std::string ar_frame = "char";
+std::string ar_frame_depth = "char_dep";
+bool tf_publish = true;
 
 void setRosCov(cv::Mat src, double dst[36]) //6x6共分散行列をros形式にする
 {
@@ -69,8 +70,8 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     geometry_msgs::TransformStamped transformStamped;
     geometry_msgs::PoseWithCovarianceStamped msg;
 
-    transformStamped.header.frame_id = "camera_color_frame";
-    msg.header.frame_id = "camera_color_frame";
+    transformStamped.header.frame_id = cam_frame.c_str();
+    msg.header.frame_id = cam_frame.c_str();
     transformStamped.child_frame_id = ar_frame.c_str();
     transformStamped.transform.translation.x = tvec[2];
     transformStamped.transform.translation.y = -tvec[0];
@@ -89,25 +90,50 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     for(int i = 0; i < 36; i++)
         msg.pose.covariance[i] = cov[i];
 
-    ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
+    /*ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
              ar_frame.c_str(), tvec[0], tvec[1], tvec[2],
-             q.x(), q.y(), q.z(), q.w());
+             q.x(), q.y(), q.z(), q.w());*/
 
     msg.header.stamp = ros::Time::now();
     pub.publish(msg);
     transformStamped.header.stamp = ros::Time::now();
-    tfb.sendTransform(transformStamped);
+    if(tf_publish)
+        tfb.sendTransform(transformStamped);
 }
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "charuco_tracker");
 
-    RosImageConverter rosimg("/camera/color/image_rect_color", "/camera/color/camera_info", 
-                                    sensor_msgs::image_encodings::BGR8);
-    RosImageConverter rosdepth("/camera/aligned_depth_to_color/image_raw", "/camera/aligned_depth_to_color/camera_info",
-                                    sensor_msgs::image_encodings::TYPE_16UC1);
     ros::NodeHandle nh;
+    ros::NodeHandle pnh("~");
+
+    std::vector<int> marker_ids;
+    pnh.getParam("marker_ids", marker_ids);
+    std::sort(marker_ids.begin(), marker_ids.end());
+    for(int i = 0; i < 4; i++)
+        ar_frame += "_" + std::to_string(marker_ids[i]);
+    for(int i = 0; i < 4; i++)
+        ar_frame_depth += "_" + std::to_string(marker_ids[i]);
+    
+    pnh.getParam("camera_frame", cam_frame);
+
+    int frequency = 30; //hz
+    pnh.getParam("frequency", cam_frame);
+
+    int sampling_num = SAMPLING_NUM;
+    pnh.getParam("sampling_n", sampling_num);
+
+    pnh.getParam("tf_publish", tf_publish);
+
+    string img_topic, img_info;
+    string depth_topic, depth_info;
+    pnh.getParam("rgb_topic", img_topic);
+    pnh.getParam("rgb_camera_info", img_info);
+    pnh.getParam("depth_topic", depth_topic);
+    pnh.getParam("depth_camera_info", depth_info);
+    RosImageConverter rosimg(img_topic, img_info, sensor_msgs::image_encodings::BGR8);
+    RosImageConverter rosdepth(depth_topic, depth_info, sensor_msgs::image_encodings::TYPE_16UC1);
 
     ros::Publisher rgb_pub = nh.advertise<geometry_msgs::PoseWithCovarianceStamped>
                                     (ar_frame + "/rgb_pose", 10);
@@ -132,16 +158,16 @@ int main(int argc, char **argv)
     static tf2_ros::TransformBroadcaster tfb;
     geometry_msgs::TransformStamped transformStamped;
 
-    transformStamped.header.frame_id = "camera_color_frame";
+    transformStamped.header.frame_id = cam_frame.c_str();
     transformStamped.child_frame_id = ar_frame.c_str();
     transformStamped.header.stamp = ros::Time::now();
     tfb.sendTransform(transformStamped);
 
-    vector<int> ids, charucoIds;
-    vector<cv::Vec4i> diamondIds;
-    vector<vector<cv::Point2f>> corners, rejected, diamondCorners;
-    vector<cv::Point2f> charucoCorners;
-    vector<cv::Vec3d> rvecs, tvecs;
+    std::vector<int> ids, charucoIds;
+    std::vector<cv::Vec4i> diamondIds;
+    std::vector<std::vector<cv::Point2f>> corners, rejected, diamondCorners;
+    std::vector<cv::Point2f> charucoCorners;
+    std::vector<cv::Vec3d> rvecs, tvecs;
 
     cv::Vec3d rgb_rpy, rgb_tvec, rgb_rvec;
     cv::Vec3d depth_rpy, depth_tvec;
@@ -152,14 +178,14 @@ int main(int argc, char **argv)
     cv::Mat V = cv::Mat::zeros(3,1, CV_64F);
 
     //６軸姿勢ベクトル集合 ROW:[x,y,z,r,p,y], COL:[サンプリング数]
-    cv::Mat rgb_poses = cv::Mat::zeros(6, SAMPLING_NUM, CV_64F);
-    cv::Mat depth_poses = cv::Mat::zeros(6, SAMPLING_NUM, CV_64F);
+    cv::Mat rgb_poses = cv::Mat::zeros(6, sampling_num, CV_64F);
+    cv::Mat depth_poses = cv::Mat::zeros(6, sampling_num, CV_64F);
     int poses_head = 0;
     //分散共分散行列
     double rgb_cov[36] = {};
     double depth_cov[36] = {};
 
-    ros::Rate rate(30); //hz
+    ros::Rate rate(frequency);
 
     while (ros::ok()){
         cv_bridge::CvImagePtr rgb_ptr, depth_ptr;
@@ -205,14 +231,18 @@ int main(int argc, char **argv)
         
         for (unsigned int i = 0; i < diamondIds.size(); i++){
             cv::Vec4i id = diamondIds[i];
-            if (target_id == id[0]+id[1]+id[2]+id[3]){
+            bool marker_ok = true;
+            for(int j = 0; j < 4; j++)
+                marker_ok &= (id[j] == marker_ids[j]);
+
+            if (marker_ok){
                 /* ---rgbカメラ系の処理--- */
                 rgb_tvec = tvecs[i];
                 rgb_rvec = rvecs[i];
                 tf2::Matrix3x3(rgb_quat).getRPY(rgb_rpy[0], rgb_rpy[1], rgb_rpy[2]);
                 
                 /* ---depthカメラ系の処理--- */
-                vector<cv::Point2f> dcor = diamondCorners[i];
+                std::vector<cv::Point2f> dcor = diamondCorners[i];
                 cv::Point pt[4] = {dcor[0], dcor[1], dcor[2], dcor[3]};
                 //マーカの重心座標の検出
                 double s1 = ((pt[3].x-pt[1].x)*(pt[0].y-pt[1].y)-(pt[3].y-pt[1].y)*(pt[0].x-pt[1].x)) / 2.0;
@@ -336,7 +366,7 @@ int main(int argc, char **argv)
                 setRosCov(rgb_cov_, rgb_cov);
                 setRosCov(depth_cov_, depth_cov);
 
-                poses_head += (poses_head < SAMPLING_NUM-1) ? 1 : -poses_head;
+                poses_head += (poses_head < sampling_num-1) ? 1 : -poses_head;
             }
         }
         rgb_quat = getQuaternion(rgb_rvec);
