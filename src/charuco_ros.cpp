@@ -31,8 +31,8 @@ using namespace std;
 using namespace cv;
 
 const int target_id = 6;
-std::string ar_frame = "ar_mark_" + std::to_string(target_id);
-std::string ar_frame_depth = "ar_mark_" + std::to_string(target_id) + "_depth";
+std::string ar_frame = "char_mark_" + std::to_string(target_id);
+std::string ar_frame_depth = "char_mark_" + std::to_string(target_id) + "_depth";
 
 void setRosCov(cv::Mat src, double dst[36]) //6x6共分散行列をros形式にする
 {
@@ -89,10 +89,10 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     for(int i = 0; i < 36; i++)
         msg.pose.covariance[i] = cov[i];
 
-    /*ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
+    ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
              ar_frame.c_str(), tvec[0], tvec[1], tvec[2],
              q.x(), q.y(), q.z(), q.w());
-*/
+
     msg.header.stamp = ros::Time::now();
     pub.publish(msg);
     transformStamped.header.stamp = ros::Time::now();
@@ -305,8 +305,6 @@ int main(int argc, char **argv)
                 rpy[0] = (rxy13 + rxy02) / 2.0; //x軸回転(roll)
                 rpy[1] = atan2(NV.at<double>(2), NV.at<double>(0)) + M_PI/2; //y軸回転(pitch)
                 rpy[2] = atan2(NV.at<double>(2), NV.at<double>(1)) - M_PI/2; //z軸回転(yaw)
-
-                ROS_INFO("%f %f", NV.at<double>(0), NV.at<double>(1));
 
                 depth_tvec = tvec;
                 depth_rpy = rpy;

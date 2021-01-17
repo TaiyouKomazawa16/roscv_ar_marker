@@ -162,13 +162,18 @@ include_directories(
 )
 
 add_executable(
-  #aruco_ros_node src/aruco_ros.cpp
-  charuco_ros_node src/charuco_ros.cpp
+  charuco_tracker_node src/charuco_ros.cpp
 )
-
 target_link_libraries(
-  #aruco_ros_node
-  charuco_ros_node
+  charuco_tracker_node
+ ${catkin_LIBRARIES}
+ ${OpenCV_LIBRARIES}
+)
+add_executable(
+  aruco_tracker_node src/aruco_ros.cpp
+)
+target_link_libraries(
+  aruco_tracker_node
  ${catkin_LIBRARIES}
  ${OpenCV_LIBRARIES}
 )
