@@ -90,9 +90,9 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     for(int i = 0; i < 36; i++)
         msg.pose.covariance[i] = cov[i];
 
-    /*ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
+    ROS_INFO("%s:\nT:[%.3f,%.3f,%.3f] \nR:[%f,%f,%f,%f]",
              ar_frame.c_str(), tvec[0], tvec[1], tvec[2],
-             q.x(), q.y(), q.z(), q.w());*/
+             q.x(), q.y(), q.z(), q.w());
 
     msg.header.stamp = ros::Time::now();
     pub.publish(msg);
@@ -144,9 +144,10 @@ int main(int argc, char **argv)
     cv::Size img_size = rosimg.get_size();
 
     int dictionaryId = 8;
-    float markerLength = 0.044; //マーカーの正方形の長さ[m]
-
+    float markerLength = 0.0435; //マーカーの正方形の長さ[m]
+    pnh.getParam("ar_marker_len", markerLength);
     float squareLength = 0.065; //チェス盤の正方形の長さ[m]
+    pnh.getParam("ch_marker_len", squareLength);
 
     cv::Mat imgMatrix = rosimg.getK();
     cv::Mat depthMatrix = rosdepth.getK();

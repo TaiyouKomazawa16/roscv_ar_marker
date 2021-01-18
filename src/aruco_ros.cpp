@@ -27,11 +27,11 @@
 
 using namespace std;
 using namespace cv;
-using namespace aruco;
 
-const int target_id = 0;
-std::string ar_frame = "ar_mark_" + std::to_string(target_id);
-std::string ar_frame_depth = "ar_mark_" + std::to_string(target_id) + "_depth";
+std::string cam_frame;
+std::string ar_frame = "ar";
+std::string ar_frame_depth = "ar_dep";
+bool tf_publish = true;
 
 void setRosCov(cv::Mat src, double dst[36]) //6x6共分散行列をros形式にする
 {
@@ -68,8 +68,8 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     geometry_msgs::TransformStamped transformStamped;
     geometry_msgs::PoseWithCovarianceStamped msg;
 
-    transformStamped.header.frame_id = "camera_color_frame";
-    msg.header.frame_id = "camera_color_frame";
+    transformStamped.header.frame_id = cam_frame.c_str();
+    msg.header.frame_id = cam_frame.c_str();
     transformStamped.child_frame_id = ar_frame.c_str();
     transformStamped.transform.translation.x = tvec[2];
     transformStamped.transform.translation.y = -tvec[0];
@@ -95,17 +95,40 @@ void ar_broadcast(ros::Publisher &pub, std::string ar_frame, Vec3d tvec, tf2::Qu
     msg.header.stamp = ros::Time::now();
     pub.publish(msg);
     transformStamped.header.stamp = ros::Time::now();
-    tfb.sendTransform(transformStamped);
+    if (tf_publish)
+        tfb.sendTransform(transformStamped);
 }
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "aruco_tracker");
-    RosImageConverter rosimg("/camera/color/image_rect_color", "/camera/color/camera_info", 
-                                    sensor_msgs::image_encodings::BGR8);
-    RosImageConverter rosdepth("/camera/aligned_depth_to_color/image_raw", "/camera/aligned_depth_to_color/camera_info",
-                                    sensor_msgs::image_encodings::TYPE_16UC1);
+
     ros::NodeHandle nh;
+    ros::NodeHandle pnh("~");
+
+    int marker_id;
+    pnh.getParam("marker_id", marker_id);
+    ar_frame += "_" + std::to_string(marker_id);
+    ar_frame_depth += "_" + std::to_string(marker_id);
+
+    pnh.getParam("camera_frame", cam_frame);
+
+    int frequency = 30; //hz
+    pnh.getParam("frequency", cam_frame);
+
+    int sampling_num = SAMPLING_NUM;
+    pnh.getParam("sampling_n", sampling_num);
+
+    pnh.getParam("tf_publish", tf_publish);
+
+    string img_topic, img_info;
+    string depth_topic, depth_info;
+    pnh.getParam("rgb_topic", img_topic);
+    pnh.getParam("rgb_camera_info", img_info);
+    pnh.getParam("depth_topic", depth_topic);
+    pnh.getParam("depth_camera_info", depth_info);
+    RosImageConverter rosimg(img_topic, img_info, sensor_msgs::image_encodings::BGR8);
+    RosImageConverter rosdepth(depth_topic, depth_info, sensor_msgs::image_encodings::TYPE_16UC1);
 
     ros::Publisher rgb_pub = nh.advertise<geometry_msgs::PoseWithCovarianceStamped>
                                     (ar_frame + "/rgb_pose", 10);
@@ -118,6 +141,7 @@ int main(int argc, char **argv)
     int dictionaryId = 8;
 
     float markerLength = 0.0435;
+    pnh.getParam("ar_marker_len", markerLength);
 
     cv::Mat imgMatrix = rosimg.getK();
     cv::Mat depthMatrix = rosdepth.getK();
@@ -129,14 +153,14 @@ int main(int argc, char **argv)
     static tf2_ros::TransformBroadcaster tfb;
     geometry_msgs::TransformStamped transformStamped;
 
-    transformStamped.header.frame_id = "camera_color_frame";
+    transformStamped.header.frame_id = cam_frame.c_str();
     transformStamped.child_frame_id = ar_frame.c_str();
     transformStamped.header.stamp = ros::Time::now();
     tfb.sendTransform(transformStamped);
 
-    vector<int> ids;
-    vector<vector<Point2f>> corners, rejected;
-    vector<Vec3d> rvecs, tvecs;
+    std::vector<int> ids;
+    std::vector<std::vector<Point2f>> corners, rejected;
+    std::vector<Vec3d> rvecs, tvecs;
 
     cv::Vec3d rgb_rpy, rgb_tvec, rgb_rvec;
     cv::Vec3d depth_rpy, depth_tvec;
@@ -154,7 +178,7 @@ int main(int argc, char **argv)
     double rgb_cov[36] = {};
     double depth_cov[36] = {};
 
-    ros::Rate rate(30); //hz
+    ros::Rate rate(frequency); //hz
 
     while(ros::ok()){
         cv_bridge::CvImagePtr rgb_ptr, depth_ptr;
@@ -186,14 +210,15 @@ int main(int argc, char **argv)
         aruco::estimatePoseSingleMarkers(corners, markerLength, imgMatrix, distCoeffs, rvecs, tvecs);
 
         for (unsigned int i = 0; i < ids.size(); i++){
-            if (target_id == ids[i]){
+            if (marker_id == ids[i])
+            {
                 /* ---rgbカメラ系の処理--- */
                 rgb_tvec = tvecs[i];
                 rgb_rvec = rvecs[i];
                 tf2::Matrix3x3(rgb_quat).getRPY(rgb_rpy[0], rgb_rpy[1], rgb_rpy[2]);
                 
                 /* ---depthカメラ系の処理--- */
-                vector<cv::Point2f> dcor = corners[i];
+                std::vector<cv::Point2f> dcor = corners[i];
                 cv::Point pt[4] = {dcor[0], dcor[1], dcor[2], dcor[3]};
                 //マーカの重心座標の検出
                 double s1 = ((pt[3].x-pt[1].x)*(pt[0].y-pt[1].y)-(pt[3].y-pt[1].y)*(pt[0].x-pt[1].x)) / 2.0;

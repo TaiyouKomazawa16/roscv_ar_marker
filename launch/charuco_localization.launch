@@ -1,17 +1,20 @@
 <launch>
-    <include file="$(find realsense2_camera)/launch/rs_rgbd.launch"/>
+    <!--<include file="$(find realsense2_camera)/launch/rs_rgbd.launch"/>-->
 
-    <node pkg="roscv_ar_marker" name="char_tracker" type="charuco_tracker_node">
-      <param name="frequency" value="30"/> 
-      <rosparam param="marker_ids">[0, 2, 1, 3]</rosparam>
-      <param name="camera_frame" value="camera_color_frame"/>
-      <param name="rgb_topic" value="/camera/color/image_rect_color"/>
-      <param name="rgb_camera_info" value="/camera/color/camera_info"/>
-      <param name="depth_topic" value="/camera/aligned_depth_to_color/image_raw"/>
-      <param name="depth_camera_info" value="/camera/aligned_depth_to_color/camera_info"/>
+  <node pkg="roscv_ar_marker" name="char_tracker" type="charuco_tracker_node">
+    <param name="frequency" value="30"/> 
+    <rosparam param="marker_ids">[0, 2, 1, 3]</rosparam>
+    <param name="camera_frame" value="camera_color_frame"/>
+    <param name="rgb_topic" value="/camera/color/image_rect_color"/>
+    <param name="rgb_camera_info" value="/camera/color/camera_info"/>
+    <param name="depth_topic" value="/camera/aligned_depth_to_color/image_raw"/>
+    <param name="depth_camera_info" value="/camera/aligned_depth_to_color/camera_info"/>
 
-      <param name="tf_publish" value="false"/>
-    </node>
+    <param name="ar_maker_len" value="0.0435"/>
+    <param name="ch_maker_len" value="0.0655"/>
+
+    <param name="tf_publish" value="false"/>
+  </node>
 
   <node pkg="robot_localization" type="ekf_localization_node" name="ekf_char_track" clear_params="true"> 
     <param name="frequency" value="30"/> 
